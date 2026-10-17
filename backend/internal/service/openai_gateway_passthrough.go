@@ -254,6 +254,16 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 		body = sanitizedBody
 	}
 
+	// Codex 图像任务在 API 模式下走 base64，可能达 65MB 触发上游 502。这里在网关层
+	// 对 base64 input_image 做有损压缩（review 用途足够），把大 body 压下去。fail-open。
+	compressedBody, compressed, err := compressBase64InputImagesInOpenAIBody(body)
+	if err != nil {
+		return nil, err
+	}
+	if compressed {
+		body = compressedBody
+	}
+
 	// Apply OpenAI fast policy to the passthrough body (filter/block by service_tier).
 	// 统一使用 upstream 视角的 model：透传路径下 body 已经过 compact 映射 +
 	// OAuth normalize，body 中的 model 字段即上游真正会看到的 slug。

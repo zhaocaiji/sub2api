@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -643,6 +644,25 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 		if sanitizeEmptyBase64InputImagesInOpenAIRequestBodyMap(decoded) {
 			markDecodedModified()
+		}
+	}
+	// Codex 图像任务走 base64 可能达几十 MB 触发上游 502；在非透传路径同样做有损压缩。
+	// 结构与上面的空-base64 sanitize 完全一致：解码 → 原地压图 → markDecodedModified。
+	if openAIBodyMayContainImageData(body) {
+		decoded, decodeErr := ensureReqBody()
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		bodyBytesBefore := len(body)
+		if compressBase64InputImagesInOpenAIInput(decoded["input"]) {
+			markDecodedModified()
+			if normalized, marshalErr := marshalOpenAIUpstreamJSON(decoded); marshalErr == nil {
+				slog.Debug("openai_input_image_compressed",
+					"body_bytes_before", bodyBytesBefore,
+					"body_bytes_after", len(normalized),
+					"saved_bytes", bodyBytesBefore-len(normalized),
+				)
+			}
 		}
 	}
 
