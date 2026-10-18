@@ -34,7 +34,7 @@ func TestNormalizeImageDataURIRepairsMissingComma(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, remove := normalizeImageDataURI(tc.uri)
+			got, remove := normalizeImageDataURI(tc.uri, false)
 			if remove != tc.wantDrop {
 				t.Fatalf("normalizeImageDataURI(%q) remove=%v, want %v", tc.uri, remove, tc.wantDrop)
 			}
@@ -77,7 +77,7 @@ func TestCompressGatewayNeutralisesMalformedImageURL(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			out, _, err := compressBase64InputImagesInOpenAIBody(raw)
+			out, _, err := compressBase64InputImagesInOpenAIBody(raw, true)
 			if err != nil {
 				t.Fatalf("compress: %v", err)
 			}
@@ -135,3 +135,73 @@ const (
 	errMissingComma imageURITestError = "missing ',' separator"
 	errBadHeader    imageURITestError = "header lacks base64 and/or image MIME"
 )
+
+// TestCorruptImagePartIsDropped 验证「无法解码的图片会被整段丢弃」。
+// 背景：Codex Windows 沙箱会把 >~1.5MB 的图片截断（openai/codex#46815），上游收到损坏 PNG
+// 会返回 400 Corrupt deflate stream。这张坏图进入会话历史后整段对话永久失败。
+// 网关丢弃该 part 后，请求可以成功（只少一张图），对话不再卡死。
+func TestCorruptImagePartIsDropped(t *testing.T) {
+	// 合法 1x1 PNG
+	validPNG, err := base64.StdEncoding.DecodeString(
+		"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	truncated := validPNG[:60] // 截断 → deflate 流损坏
+
+	cases := []struct {
+		name     string
+		uri      string
+		wantKept bool
+	}{
+		{"truncated png dropped", "data:image/png;base64," + base64.StdEncoding.EncodeToString(truncated), false},
+		{"garbage bytes dropped", "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte{0x89, 'P', 'N', 'G', 0xde, 0xad}), false},
+		{"invalid base64 dropped", "data:image/png;base64,!!!not-base64!!!", false},
+		{"valid small png kept", "data:image/png;base64," + base64.StdEncoding.EncodeToString(validPNG), true},
+		{"http link kept", "https://example.com/a.png", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := map[string]any{
+				"model": "gpt-5.6-sol",
+				"input": []any{
+					map[string]any{
+						"type": "message",
+						"role": "user",
+						"content": []any{
+							map[string]any{"type": "input_text", "text": "look"},
+							map[string]any{"type": "input_image", "image_url": tc.uri},
+						},
+					},
+				},
+			}
+			raw, _ := json.Marshal(body)
+			out, _, err := compressBase64InputImagesInOpenAIBody(raw, true)
+			if err != nil {
+				t.Fatalf("compress: %v", err)
+			}
+			var parsed map[string]any
+			if err := json.Unmarshal(out, &parsed); err != nil {
+				t.Fatalf("输出不是合法 JSON: %v", err)
+			}
+			items, _ := parsed["input"].([]any)
+			im, _ := items[0].(map[string]any)
+			parts, _ := im["content"].([]any)
+
+			kept := false
+			for _, p := range parts {
+				pm, _ := p.(map[string]any)
+				if strings.TrimSpace(pm["type"].(string)) != "input_image" {
+					continue
+				}
+				if _, ok := pm["image_url"].(string); ok {
+					kept = true
+				}
+			}
+			if kept != tc.wantKept {
+				t.Errorf("part kept=%v, want %v", kept, tc.wantKept)
+			}
+		})
+	}
+}
