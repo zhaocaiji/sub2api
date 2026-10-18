@@ -92,7 +92,7 @@ func compressBase64InputImagesInOpenAIInput(input any, dropCorrupt bool) bool {
 		}
 		if parts, ok := itemMap["content"].([]any); ok {
 			kept := make([]any, 0, len(parts))
-			droppedAny := false
+			droppedCount := 0
 			changedAnyPart := false
 			for _, part := range parts {
 				c, drop := compressBase64InputImagePart(part, dropCorrupt)
@@ -100,12 +100,14 @@ func compressBase64InputImagesInOpenAIInput(input any, dropCorrupt bool) bool {
 					changedAnyPart = true
 				}
 				if drop {
-					droppedAny = true
+					droppedCount++
 					continue
 				}
 				kept = append(kept, part)
 			}
-			if droppedAny {
+			if droppedCount > 0 {
+				// 不要静默丢弃：给模型留一条说明，让它知道有图丢了、可以要求重发/重新截图/重新生成。
+				kept = append(kept, imageDroppedNoticePart(droppedCount))
 				itemMap["content"] = kept
 				changedAnyPart = true
 			}
@@ -406,6 +408,24 @@ const (
 // 而这张坏图一旦进入会话历史，每一轮重试都会重发它，整个对话永久失败。
 // 丢弃该 part 可以把「硬 400」变成「请求成功，只少这一张图」。
 const openAIDropUndecodableImages = true
+
+// imageDroppedNoticePart 生成一条插入到 content 的说明，告诉模型有图片因损坏被丢弃。
+// 不做静默丢弃：模型需要知道图片丢失，才能主动要求用户重发/重新截图/重新生成。
+func imageDroppedNoticePart(count int) map[string]any {
+	subject := "1 image"
+	object := "it"
+	if count > 1 {
+		subject = fmt.Sprintf("%d images", count)
+		object = "them"
+	}
+	return map[string]any{
+		"type": "input_text",
+		"text": fmt.Sprintf(
+			"[gateway notice] %s could not be delivered: the image data was corrupt or truncated and could not be decoded, so %s was removed before reaching you. You cannot see %s. If this content matters, ask the user to re-attach the image, take a new screenshot, or regenerate it.",
+			subject, object, object,
+		),
+	}
+}
 
 // shouldDropUndecodableImages 判断该账号的上游是否属于「收到损坏图片会直接 400」的那类。
 // 仅对真正的 OpenAI / Codex 上游启用；CN 供应商（DeepSeek / Kimi 等）保持原样透传，
