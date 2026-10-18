@@ -654,7 +654,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			return nil, decodeErr
 		}
 		bodyBytesBefore := len(body)
-		if compressBase64InputImagesInOpenAIInput(decoded["input"]) {
+		if compressBase64InputImagesInOpenAIInput(decoded["input"], shouldDropUndecodableImages(account)) {
 			markDecodedModified()
 			if normalized, marshalErr := marshalOpenAIUpstreamJSON(decoded); marshalErr == nil {
 				slog.Debug("openai_input_image_compressed",

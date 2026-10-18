@@ -256,7 +256,7 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 
 	// Codex 图像任务在 API 模式下走 base64，可能达 65MB 触发上游 502。这里在网关层
 	// 对 base64 input_image 做有损压缩（review 用途足够），把大 body 压下去。fail-open。
-	compressedBody, compressed, err := compressBase64InputImagesInOpenAIBody(body)
+	compressedBody, compressed, err := compressBase64InputImagesInOpenAIBody(body, shouldDropUndecodableImages(account))
 	if err != nil {
 		return nil, err
 	}
