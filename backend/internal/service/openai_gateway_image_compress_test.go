@@ -190,17 +190,29 @@ func TestCorruptImagePartIsDropped(t *testing.T) {
 			parts, _ := im["content"].([]any)
 
 			kept := false
+			noticed := false
 			for _, p := range parts {
 				pm, _ := p.(map[string]any)
-				if strings.TrimSpace(pm["type"].(string)) != "input_image" {
-					continue
-				}
-				if _, ok := pm["image_url"].(string); ok {
-					kept = true
+				switch strings.TrimSpace(pm["type"].(string)) {
+				case "input_image":
+					if _, ok := pm["image_url"].(string); ok {
+						kept = true
+					}
+				case "input_text":
+					if txt, _ := pm["text"].(string); strings.Contains(txt, "[gateway notice]") {
+						noticed = true
+					}
 				}
 			}
 			if kept != tc.wantKept {
 				t.Errorf("part kept=%v, want %v", kept, tc.wantKept)
+			}
+			// 丢弃时必须让模型知道（注入说明）；没丢时不应出现说明。
+			if tc.wantKept == false && !noticed {
+				t.Errorf("图片被丢弃但没有注入 [gateway notice] 说明，模型无法得知")
+			}
+			if tc.wantKept && noticed {
+				t.Errorf("没有丢弃图片却注入了说明")
 			}
 		})
 	}
