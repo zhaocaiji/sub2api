@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -127,6 +128,11 @@ func (r *OpenAITokenRefresher) Refresh(ctx context.Context, account *Account) (m
 	newCredentials := r.openaiOAuthService.BuildAccountCredentials(tokenInfo)
 	newCredentials = MergeCredentials(account.Credentials, newCredentials)
 	newCredentials = NormalizeOpenAIPersonalAccessTokenCredentials(account, tokenInfo, newCredentials)
+	// 上游刷新响应有时不带身份字段；从 id_token 补齐，避免
+	// quota / reset-credit 因 chatgpt_account_id 缺失而 400。
+	if EnsureOpenAIIdentityCredentials(newCredentials) {
+		slog.Info("openai_identity_credentials_restored_from_id_token", "account_id", account.ID)
+	}
 
 	return newCredentials, nil
 }
