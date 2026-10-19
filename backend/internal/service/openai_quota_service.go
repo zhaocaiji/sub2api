@@ -471,11 +471,10 @@ func (s *OpenAIQuotaService) prepareUpstreamCall(ctx context.Context, accountID 
 		account = resolved
 	}
 
-	chatGPTAccountID = strings.TrimSpace(account.GetCredential("chatgpt_account_id"))
-	if chatGPTAccountID == "" {
-		// Fall back to organization_id — some legacy accounts only persisted poid.
-		chatGPTAccountID = strings.TrimSpace(account.GetCredential("organization_id"))
-	}
+	// credentials.chatgpt_account_id → organization_id → id_token 的 auth claim。
+	// 第三级兜底用于 credentials 丢字段（只剩 token）时仍能工作，见
+	// openai_identity_fallback.go 的说明。
+	chatGPTAccountID = ResolveOpenAIChatGPTAccountID(account)
 	if chatGPTAccountID == "" {
 		return "", "", "", false, infraerrors.New(http.StatusBadRequest, "OPENAI_QUOTA_MISSING_ACCOUNT_ID", "chatgpt_account_id is missing; please re-authorize this account")
 	}
