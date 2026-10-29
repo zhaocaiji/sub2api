@@ -209,10 +209,13 @@ func compressToolOutputImages(value any, dropCorrupt bool) (any, bool, bool) {
 		return kept, true, false
 	case map[string]any:
 		// 先按 parts 处理（image_url / file_data）：这里的删除语义是删掉**整个节点**。
-		if _, drop := compressBase64InputImagePart(v, dropCorrupt); drop {
+		// 注意必须接住第一个返回值 changed —— 压缩是就地改写 map，若这里丢掉 changed，
+		// 上层会认为「没变化」而返回原始 body，压缩结果就白做了（2026-10-29 的 413 就是这么来的）。
+		partChanged, drop := compressBase64InputImagePart(v, dropCorrupt)
+		if drop {
 			return nil, true, true
 		}
-		changed := false
+		changed := partChanged
 		for k := range v {
 			rewritten, c, drop := compressToolOutputImages(v[k], dropCorrupt)
 			if c {
